@@ -1,33 +1,21 @@
 # widgets_main_window.py
 """
 主窗口模块 - 实现带毛玻璃效果的现代化主界面
-
-包含功能：
-- 可拖拽的毛玻璃效果窗口
-- 始终置顶显示
-- 功能按钮和文本显示区域
 """
 from window_frosted_glass import FrostedGlassWidget
-from PySide6.QtWidgets import QApplication, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextEdit, QMessageBox
+from PySide6.QtWidgets import QApplication, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextEdit
 from PySide6.QtCore import Qt
 from widgets_draggable import DraggableMixin
-from widgets_frosted_message_box import FrostedMessageBox
-from config_manager import load_config
+from config_manager import get_config_value, set_config_value
 
 
 class ModernWindow(DraggableMixin, FrostedGlassWidget):
     """
     现代化主窗口类，继承可拖拽和毛玻璃效果特性
-
-    特性：
-    - 可拖拽的标题栏区域
-    - 毛玻璃透明效果
-    - 始终置顶显示
-    - 功能按钮和文本显示区域
     """
 
     # 主窗体尺寸常量
-    WINDOW_SIZE = (260, 320)
+    WINDOW_SIZE = (260, 350)
 
     # 按钮样式表
     BUTTON_STYLE = {
@@ -70,6 +58,12 @@ class ModernWindow(DraggableMixin, FrostedGlassWidget):
         FrostedGlassWidget.__init__(self)
         DraggableMixin.__init__(self)
 
+        # 存储按钮引用
+        self.btn_function1 = None
+        self.btn_function2 = None
+        self.reconciliation_thread = None
+        self._is_closing = False  # 添加关闭标志
+
         self._setup_window_properties()
         self._init_ui()
         self._load_window_position()
@@ -77,9 +71,9 @@ class ModernWindow(DraggableMixin, FrostedGlassWidget):
     def _load_window_position(self):
         """加载窗口位置"""
         try:
-            config = load_config()
+            config = get_config_value("window_position", [200, 200])
             default_pos = [200, 200]
-            pos = config.get("window_position", default_pos)
+            pos = config if isinstance(config, list) and len(config) == 2 else default_pos
 
             screen = QApplication.primaryScreen()
             if not screen:
@@ -99,7 +93,7 @@ class ModernWindow(DraggableMixin, FrostedGlassWidget):
 
     def _setup_window_properties(self):
         """设置窗口基本属性"""
-        self.setWindowTitle("工具")
+        self.setWindowTitle("分销商对账工具")
         self.setFixedSize(*self.WINDOW_SIZE)
         # 设置窗口始终置顶
         self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
@@ -144,7 +138,7 @@ class ModernWindow(DraggableMixin, FrostedGlassWidget):
     def _create_text_display(self):
         """创建文本显示框"""
         self.text_display = QTextEdit()
-        self.text_display.setFixedHeight(150)
+        self.text_display.setFixedHeight(200)
         self.text_display.setStyleSheet("""
             QTextEdit {
                 background: rgba(255, 255, 255, 120);
@@ -162,11 +156,11 @@ class ModernWindow(DraggableMixin, FrostedGlassWidget):
         self.text_display.setReadOnly(True)
 
         # 设置初始提示文本
-        initial_text = """欢迎使用！
+        initial_text = """分销商对账工具 v1.0
 
 功能说明：
-• 功能一：执行第一个操作
-• 功能二：执行第二个操作
+• 功能一：执行分销商对账处理
+• 功能二：预留功能
 
 请点击下方按钮开始使用..."""
         self.text_display.setText(initial_text)
@@ -179,11 +173,11 @@ class ModernWindow(DraggableMixin, FrostedGlassWidget):
         button_layout.setSpacing(10)
 
         # 创建两个功能按钮
-        btn1 = self._create_action_button("功能一", self.on_button1_clicked)
-        btn2 = self._create_action_button("功能二", self.on_button2_clicked)
+        self.btn_function1 = self._create_action_button("对账处理", self.on_button1_clicked)
+        self.btn_function2 = self._create_action_button("功能二", self.on_button2_clicked)
 
-        button_layout.addWidget(btn1)
-        button_layout.addWidget(btn2)
+        button_layout.addWidget(self.btn_function1)
+        button_layout.addWidget(self.btn_function2)
 
         return button_layout
 
@@ -217,23 +211,99 @@ class ModernWindow(DraggableMixin, FrostedGlassWidget):
         return label
 
     def on_button1_clicked(self):
-        """功能一按钮点击事件"""
-        # self.text_display.append("✅ 功能一已执行")
+        """功能一按钮点击事件 - 执行对账功能"""
+        try:
+            # 清空文本框
+            self.text_display.clear()
+            self.text_display.append("开始执行分销商对账处理...")
+            self.text_display.append("=" * 24)
+
+            # 检查是否有正在运行的任务
+            if self.reconciliation_thread and self.reconciliation_thread.isRunning():
+                self.text_display.append("⚠ 已有任务正在运行，请等待完成...")
+                return
+
+            # 禁用按钮，防止重复点击
+            self.btn_function1.setEnabled(False)
+            self.btn_function2.setEnabled(False)
+
+            # 动态导入，避免循环导入
+            try:
+                from function.reconciliation_gui import ReconciliationWorker
+            except ImportError as e:
+                self.text_display.append(f"❌ 导入模块失败: {str(e)}")
+                self.text_display.append("请确保 function/reconciliation_gui.py 文件存在")
+                # 重新启用按钮
+                self.btn_function1.setEnabled(True)
+                self.btn_function2.setEnabled(True)
+                return
+
+            # 创建工作线程
+            self.reconciliation_thread = ReconciliationWorker()
+
+            # 连接信号
+            self.reconciliation_thread.output_signal.connect(self.update_output_display)
+            self.reconciliation_thread.finished_signal.connect(self.on_reconciliation_finished)
+
+            # 启动线程
+            self.reconciliation_thread.start()
+
+        except Exception as e:
+            self.text_display.append(f"❌ 启动对账任务失败: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
+            # 确保按钮被重新启用
+            self.btn_function1.setEnabled(True)
+            self.btn_function2.setEnabled(True)
+
+    def update_output_display(self, message):
+        """更新输出显示"""
+        if self.text_display:
+            self.text_display.append(message)
+            # 滚动到底部
+            scrollbar = self.text_display.verticalScrollBar()
+            if scrollbar:
+                scrollbar.setValue(scrollbar.maximum())
+
+    def on_reconciliation_finished(self, success, message):
+        """对账处理完成回调"""
+        if self.text_display:
+            self.text_display.append("=" * 24)
+            self.text_display.append(message)
+
+        # 重新启用按钮
+        self.btn_function1.setEnabled(True)
+        self.btn_function2.setEnabled(True)
+
+        # 清理线程引用
+        self.reconciliation_thread = None
 
     def on_button2_clicked(self):
         """功能二按钮点击事件"""
-        self.text_display.append("✅ 功能二已执行")
-
-    def show_message(self, title, text, icon=QMessageBox.Warning):
-        """显示毛玻璃风格消息弹窗"""
-        FrostedMessageBox(self, title, text, icon).exec()
+        self.text_display.append("✅ 功能二已执行（预留功能）")
 
     def closeEvent(self, event):
         """窗口关闭事件 - 保存当前位置"""
-        from config_manager import set_config_value
         try:
+            self._is_closing = True
+
+            # 停止正在运行的线程
+            if self.reconciliation_thread and self.reconciliation_thread.isRunning():
+                print("正在停止工作线程...")
+                self.reconciliation_thread.stop()
+                self.reconciliation_thread.quit()
+                if not self.reconciliation_thread.wait(2000):  # 等待2秒
+                    print("线程未正常停止，强制终止...")
+                    self.reconciliation_thread.terminate()
+                    self.reconciliation_thread.wait()
+
+            # 保存窗口位置
             pos = [self.pos().x(), self.pos().y()]
             set_config_value("window_position", pos)
+
         except Exception as e:
-            print(f"保存窗口位置失败: {str(e)}")
-        event.accept()
+            print(f"关闭窗口时发生错误: {str(e)}")
+        finally:
+            event.accept()
+            QApplication.quit()  # 确保完全退出
