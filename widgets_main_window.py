@@ -156,11 +156,11 @@ class ModernWindow(DraggableMixin, FrostedGlassWidget):
         self.text_display.setReadOnly(True)
 
         # 设置初始提示文本
-        initial_text = """分销商对账工具 v1.0
+        initial_text = """分销商对账工具 v2.0
 
 功能说明：
-• 功能一：执行分销商对账处理
-• 功能二：预留功能
+• 功能一：执行分销商数据对账
+• 功能二：汇总对账数据
 
 请点击下方按钮开始使用..."""
         self.text_display.setText(initial_text)
@@ -173,8 +173,8 @@ class ModernWindow(DraggableMixin, FrostedGlassWidget):
         button_layout.setSpacing(10)
 
         # 创建两个功能按钮
-        self.btn_function1 = self._create_action_button("对账处理", self.on_button1_clicked)
-        self.btn_function2 = self._create_action_button("功能二", self.on_button2_clicked)
+        self.btn_function1 = self._create_action_button("开始对账", self.on_button1_clicked)
+        self.btn_function2 = self._create_action_button("数据汇总", self.on_button2_clicked)
 
         button_layout.addWidget(self.btn_function1)
         button_layout.addWidget(self.btn_function2)
@@ -215,7 +215,6 @@ class ModernWindow(DraggableMixin, FrostedGlassWidget):
         try:
             # 清空文本框
             self.text_display.clear()
-            self.text_display.append("开始执行分销商对账处理...")
             self.text_display.append("=" * 24)
 
             # 检查是否有正在运行的任务
@@ -266,11 +265,19 @@ class ModernWindow(DraggableMixin, FrostedGlassWidget):
             if scrollbar:
                 scrollbar.setValue(scrollbar.maximum())
 
+    # 在 widgets_main_window.py 的 on_reconciliation_finished 方法中添加
     def on_reconciliation_finished(self, success, message):
-        """对账处理完成回调"""
+        """开始对账完成回调"""
         if self.text_display:
             self.text_display.append("=" * 24)
             self.text_display.append(message)
+
+            # 如果有错误，添加处理建议
+            if not success and "多个'商家编码'字段" in self.text_display.toPlainText():
+                self.text_display.append("\n💡 处理建议：")
+                self.text_display.append("1. 请打开Excel文件检查列名")
+                self.text_display.append("2. 确保只有一个名为'商家编码'的列")
+                self.text_display.append("3. 修改后重新执行对账处理")
 
         # 重新启用按钮
         self.btn_function1.setEnabled(True)
@@ -280,8 +287,24 @@ class ModernWindow(DraggableMixin, FrostedGlassWidget):
         self.reconciliation_thread = None
 
     def on_button2_clicked(self):
-        """功能二按钮点击事件"""
-        self.text_display.append("✅ 功能二已执行（预留功能）")
+        try:
+            self.text_display.append("开始执行【售后汇总】...")
+            self.text_display.append("=" * 24)
+
+            from function.summary import run_summary
+
+            def output_callback(msg):
+                self.update_output_display(msg)
+
+            success = run_summary(output_callback)
+
+            if success:
+                self.text_display.append("✅ 售后汇总完成！")
+            else:
+                self.text_display.append("❌ 售后汇总失败！")
+
+        except Exception as e:
+            self.text_display.append(f"❌ 执行失败：{e}")
 
     def closeEvent(self, event):
         """窗口关闭事件 - 保存当前位置"""

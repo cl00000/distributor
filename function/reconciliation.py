@@ -1,4 +1,4 @@
-# 在 function/reconciliation.py 开头添加以下代码
+# function/reconciliation.py
 import sys
 from io import StringIO
 
@@ -44,7 +44,6 @@ def run_reconciliation_with_gui(output_callback=None):
             sys.stdout = redirector
 
         # 调用原有的处理逻辑
-        # 注意：原代码是在文件顶层执行的，我们需要将其包装到函数中
         return process_all_files()
 
     except Exception as e:
@@ -59,26 +58,49 @@ def run_reconciliation_with_gui(output_callback=None):
 def process_all_files():
     """原有的处理逻辑，包装成函数"""
     # ===============================
-    # 路径配置
+    # 路径配置 - 已根据要求修改
     # ===============================
-    from pathlib import Path
-    desktop = Path.home() / "Desktop"
-    data_folder = desktop / "分销对账"
-    mapping_file = desktop / "编码.xlsx"
+    import os
+    data_folder = r"D:\分销对账"
+    mapping_folder = r"D:\分销对账\编码表"
+    mapping_file = os.path.join(mapping_folder, "编码.xlsx")
+
+    # 检查路径是否存在
+    if not os.path.exists(data_folder):
+        raise FileNotFoundError(f"数据文件夹不存在: {data_folder}")
+
+    if not os.path.exists(mapping_file):
+        raise FileNotFoundError(f"编码文件不存在: {mapping_file}")
+
+    print(f"数据文件夹: {data_folder}")
+    print(f"编码文件: {mapping_file}")
 
     # ===============================
-    # 读取编码表
+    # 读取编码表并建立映射关系
     # ===============================
     import pandas as pd
     map_df = pd.read_excel(mapping_file)
 
+    # 建立含税分销商映射
+    tax_distributor_map = {}
+    for _, row in map_df.iterrows():
+        tax_distributor = row.get("含税分销商")
+        if pd.notna(tax_distributor):
+            # 清理分销商名称，去掉空格
+            tax_distributor_clean = str(tax_distributor).strip()
+            tax_distributor_map[tax_distributor_clean] = True
+
+    print(f"含税分销商列表: {list(tax_distributor_map.keys())}")
+
+    # 建立编码信息字典
     code_info = {}
     for _, row in map_df.iterrows():
         code = str(row["货品商家编码"])
         code_info[code] = {
             "name": str(row["名称"]),
             "type": str(row["产品类型"]),
-            "price": float(row["供货价"])
+            "price": float(row["供货价"]),  # 标准供货价
+            "tax_price": float(row["供货价（含税）"]) if pd.notna(row["供货价（含税）"]) else None  # 含税供货价
         }
 
     # ===============================
@@ -91,17 +113,106 @@ def process_all_files():
 
     success_count = 0
     error_count = 0
+    multiple_code_files = []  # 记录有多重编码字段的文件
 
     # ===============================
     # 处理文件
     # ===============================
-    for file in data_folder.glob("*.xls*"):
-        try:
-            print(f"正在处理: {file.name}")
+    import glob
+    # 获取所有Excel文件（支持.xls和.xlsx）
+    excel_files = glob.glob(os.path.join(data_folder, "*.xls")) + glob.glob(os.path.join(data_folder, "*.xlsx"))
 
-            df = pd.read_excel(file, sheet_name="分销汇总")
-            if "商家编码" not in df.columns:
-                print(f"跳过 {file.name}：未找到'商家编码'列")
+    if not excel_files:
+        print(f"❌ 在文件夹 {data_folder} 中未找到Excel文件")
+        return False
+
+    for file_path in excel_files:
+        try:
+            file_name = os.path.basename(file_path)
+            print(f"正在处理: {file_name}")
+
+            # ===============================
+            # 解析文件名，确定使用哪种价格
+            # ===============================
+            file_stem = os.path.splitext(file_name)[0]  # 例如 "36号-上海帝亚"
+
+            # 提取"-"前面的分销商编号
+            if "-" in file_stem:
+                distributor_code = file_stem.split("-")[0].strip()
+            else:
+                distributor_code = file_stem.strip()
+
+            print(f"  分销商编号: {distributor_code}")
+
+            # 判断是否使用含税价格
+            use_tax_price = distributor_code in tax_distributor_map
+
+            if use_tax_price:
+                print(f"  ✓ 使用含税价格（供货价（含税））")
+            else:
+                print(f"  ✓ 使用标准价格（供货价）")
+
+            # ===============================
+            # 使用 openpyxl 直接读取 Excel 文件检查表头
+            # ===============================
+            from openpyxl import load_workbook
+
+            # 先检查文件表头
+            wb = load_workbook(file_path, read_only=True, data_only=True)
+            ws = wb["Sheet1"]
+
+            # 获取第一行所有单元格的值
+            header_values = []
+            for cell in ws[1]:
+                header_values.append(cell.value)
+
+            # 统计"商家编码"出现的次数
+            merchant_code_count = 0
+            merchant_code_positions = []
+            for col_idx, value in enumerate(header_values, 1):
+                if value == "商家编码":
+                    merchant_code_count += 1
+                    merchant_code_positions.append(col_idx)
+
+            # ===============================
+            # 如果有多个"商家编码"字段，跳过处理
+            # ===============================
+            if merchant_code_count > 1:
+                print(f"❌ 跳过 {file_name}：发现 {merchant_code_count} 个'商家编码'字段")
+                print(f"   位置：第 {', '.join(map(str, merchant_code_positions))} 列")
+                print(f"   请检查Excel文件，删除多余的'商家编码'列")
+
+                # 记录这个文件
+                multiple_code_files.append(file_name)
+                error_count += 1
+
+                # 关闭只读工作簿
+                wb.close()
+                continue
+
+            # 关闭只读工作簿
+            wb.close()
+
+            # ===============================
+            # 如果没有"商家编码"字段，也跳过
+            # ===============================
+            if merchant_code_count == 0:
+                print(f"跳过 {file_name}：未找到'商家编码'列")
+                print(f"   可用列名：{header_values}")
+                error_count += 1
+                continue
+
+            # ===============================
+            # 使用 pandas 读取数据
+            # ===============================
+            df = pd.read_excel(file_path, sheet_name="Sheet1")
+
+            # 再次确认只有一个"商家编码"列
+            merchant_code_cols = [col for col in df.columns if str(col).strip() == "商家编码"]
+            if len(merchant_code_cols) > 1:
+                print(f"❌ 跳过 {file_name}：pandas检测到 {len(merchant_code_cols)} 个'商家编码'列")
+                print(f"   列名：{merchant_code_cols}")
+                error_count += 1
                 continue
 
             from collections import defaultdict
@@ -154,15 +265,20 @@ def process_all_files():
                             break
 
             # ===============================
-            # 汇总到【名称】
+            # 汇总到【名称】并根据分销商选择价格
             # ===============================
             final = {}
             for code, qty in code_counter.items():
                 info = code_info[code]
                 name = info["name"]
-                price = info["price"]
 
-                # 👇 供货价缺失判断
+                # 根据是否使用含税价格选择价格
+                if use_tax_price and info["tax_price"] is not None:
+                    price = info["tax_price"]
+                else:
+                    price = info["price"]
+
+                # 供货价缺失判断
                 if pd.isna(price) or price == 0:
                     missing_price_names.add(name)
 
@@ -175,13 +291,10 @@ def process_all_files():
                 final[name]["数量"] += qty
 
             # ===============================
-            # 打开 Excel
+            # 打开 Excel 进行写入
             # ===============================
-            from openpyxl import load_workbook
-            from openpyxl.utils import get_column_letter
-
-            wb = load_workbook(file)
-            ws = wb["分销汇总"]
+            wb = load_workbook(file_path)
+            ws = wb["Sheet1"]
 
             # 找「商家编码」列
             code_col = None
@@ -190,7 +303,7 @@ def process_all_files():
                     code_col = c
                     break
             if not code_col:
-                print(f"跳过 {file.name}：未找到'商家编码'列")
+                print(f"跳过 {file_name}：未找到'商家编码'列")
                 continue
 
             start_col = code_col + 4  # 间隔 3 列
@@ -211,7 +324,7 @@ def process_all_files():
                     ws.cell(r, c).border = Border()
 
             # ===============================
-            # 表头
+            # 表头（保持"供货价"不变）
             # ===============================
             headers = ["分销商", "名称", "供货价", "数量", "售后处理费", "金额"]
             for i, h in enumerate(headers):
@@ -221,6 +334,7 @@ def process_all_files():
             # ===============================
             # 列字母（一次算好）
             # ===============================
+            from openpyxl.utils import get_column_letter
             price_col = get_column_letter(start_col + 2)
             qty_col = get_column_letter(start_col + 3)
             fee_col = get_column_letter(start_col + 4)
@@ -252,7 +366,7 @@ def process_all_files():
             # ===============================
             if end_row >= start_row:
                 from openpyxl.styles import Alignment
-                ws.cell(start_row, start_col).value = file.stem
+                ws.cell(start_row, start_col).value = file_stem
                 ws.merge_cells(
                     start_row=start_row,
                     start_column=start_col,
@@ -335,13 +449,35 @@ def process_all_files():
                     ", ".join(sorted(missing_price_names))
                 ).font = red_font
 
-            wb.save(file)
-            print(f"✅ 已处理：{file.name}")
+            # ===============================
+            # 价格类型提示
+            # ===============================
+            if use_tax_price:
+                ws.cell(
+                    warn_row + 2 if warn_row > total_row + 2 else total_row + 2,
+                    start_col,
+                    f"📝 注：本表使用含税价格（供货价（含税））"
+                )
+
+            wb.save(file_path)
+            print(f"✅ 已处理：{file_name}")
             success_count += 1
 
         except Exception as e:
-            print(f"❌ 处理失败：{file.name} → {e}")
+            print(f"❌ 处理失败：{file_name} → {e}")
+            import traceback
+            traceback.print_exc()
             error_count += 1
 
+    # ===============================
+    # 输出汇总信息
+    # ===============================
     print(f"\n处理完成！成功：{success_count} 个文件，失败：{error_count} 个文件")
+
+    if multiple_code_files:
+        print(f"\n⚠ 以下文件因有多个'商家编码'字段未处理：")
+        for file_name in multiple_code_files:
+            print(f"  • {file_name}")
+        print(f"请检查这些文件，删除多余的'商家编码'列后重新执行")
+
     return True
