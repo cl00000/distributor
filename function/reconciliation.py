@@ -106,7 +106,7 @@ def process_all_files():
     # ===============================
     # 样式
     # ===============================
-    from openpyxl.styles import Border, Side, Font
+    from openpyxl.styles import Border, Side, Font, Alignment
     thin = Side(style="thin")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
     red_font = Font(color="FF0000")
@@ -365,7 +365,6 @@ def process_all_files():
             # 分销商合并（安全）
             # ===============================
             if end_row >= start_row:
-                from openpyxl.styles import Alignment
                 ws.cell(start_row, start_col).value = file_stem
                 ws.merge_cells(
                     start_row=start_row,
@@ -401,18 +400,23 @@ def process_all_files():
             )
 
             # ===============================
-            # 边框（表头 + 数据 + 合计）
+            # 边框和居中（表头 + 数据 + 合计）
             # ===============================
             for row in range(1, total_row + 1):
                 for col in range(start_col, start_col + len(headers)):
-                    ws.cell(row, col).border = border
+                    cell = ws.cell(row, col)
+                    cell.border = border
+                    cell.alignment = Alignment(horizontal='center', vertical='center')
 
             # ===============================
             # 列宽
             # ===============================
-            ws.column_dimensions[get_column_letter(start_col)].width = 18  # 分销商
-            ws.column_dimensions[get_column_letter(start_col + 1)].width = 22
-            ws.column_dimensions[get_column_letter(start_col + 2)].width = 12
+            ws.column_dimensions[get_column_letter(start_col)].width = 22  # 分销商
+            ws.column_dimensions[get_column_letter(start_col + 1)].width = 22  # 名称
+            ws.column_dimensions[get_column_letter(start_col + 2)].width = 15  # 供货价
+            ws.column_dimensions[get_column_letter(start_col + 3)].width = 15
+            ws.column_dimensions[get_column_letter(start_col + 4)].width = 15
+            ws.column_dimensions[get_column_letter(start_col + 5)].width = 15
 
             for i in range(1, 4):  # 间隔列
                 ws.column_dimensions[get_column_letter(code_col + i)].width = 6
